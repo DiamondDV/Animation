@@ -1,0 +1,363 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Liquid Glass Video Player</title>
+  <style>
+    :root{
+      --bg1:#0f1226; /* deep indigo */
+      --bg2:#0a0c17; /* near-black */
+      --glass: rgba(255,255,255,.12);
+      --glass-strong: rgba(255,255,255,.18);
+      --on-glass: #eef1ff;
+      --accent-1: #7aa2ff; /* material-ish soft blue */
+      --accent-2: #9a7cff; /* periwinkle */
+      --accent-3: #59f1d6; /* mint */
+      --shadow: 0 10px 30px rgba(0,0,0,.45);
+      --radius-outer: 28px;
+      --radius-inner: 18px;
+    }
+    *{box-sizing:border-box}
+    html,body{height:100%}
+    body{
+      margin:0; 
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, "Noto Sans", "Apple Color Emoji", "Segoe UI Emoji";
+      color:var(--on-glass);
+      background: radial-gradient(1200px 800px at 20% 10%, #1a1f47 0%, transparent 60%),
+                  radial-gradient(800px 800px at 80% 90%, #0f2c3a 0%, transparent 55%),
+                  linear-gradient(160deg, var(--bg1), var(--bg2));
+      display:grid; place-items:center;
+      padding: clamp(10px, 2vw, 24px);
+    }
+
+    /* Shell */
+    .player-shell{
+      width:min(100%, 1100px);
+      aspect-ratio:16/9;
+      position:relative;
+      border-radius: var(--radius-outer);
+      overflow:hidden;
+      box-shadow: var(--shadow);
+      background:#000; /* fallback while loading */
+      isolation:isolate; /* ensure backdrop works above video */
+    }
+
+    video{
+      width:100%; height:100%; object-fit:cover; display:block;
+      background:#000;
+    }
+
+    /* Top gradient chrome */
+    .vignette{ position:absolute; inset:0; pointer-events:none;}
+    .vignette::before{
+      content:""; position:absolute; inset:0;
+      background: radial-gradient(100% 120% at 50% 0%, rgba(0,0,0,.45), transparent 45%),
+                  radial-gradient(120% 120% at 50% 100%, rgba(0,0,0,.55), transparent 55%);
+      mix-blend-mode: normal;
+    }
+
+    /* Big play */
+    .center-play{
+      position:absolute; inset:0; display:grid; place-items:center; pointer-events:none;
+      transition:opacity .25s ease; opacity:0;
+    }
+    .center-play.visible{ opacity:1; }
+    .center-play .btn{
+      pointer-events:auto;
+      width:92px; height:92px; border-radius:28px; border:1px solid rgba(255,255,255,.25);
+      background: linear-gradient(180deg, rgba(255,255,255,.16), rgba(255,255,255,.08));
+      backdrop-filter: blur(14px) saturate(140%);
+      -webkit-backdrop-filter: blur(14px) saturate(140%);
+      display:grid; place-items:center; box-shadow: var(--shadow);
+      transition: transform .12s ease, background .2s ease;
+    }
+    .center-play .btn:active{ transform: scale(.98) }
+
+    /* Controls bar */
+    .controls{
+      position:absolute; left:16px; right:16px; bottom:16px;
+      display:flex; flex-direction:column; gap:10px;
+      padding:10px 12px 12px; border-radius: var(--radius-inner);
+      background: linear-gradient(180deg, var(--glass-strong), rgba(255,255,255,.10));
+      backdrop-filter: blur(18px) saturate(160%) brightness(110%);
+      -webkit-backdrop-filter: blur(18px) saturate(160%) brightness(110%);
+      border:1px solid rgba(255,255,255,.22);
+      box-shadow: var(--shadow);
+      opacity:1; transform: translateY(0);
+      transition: opacity .25s ease, transform .25s ease;
+    }
+    .controls.hidden{ opacity:0; transform: translateY(14px); pointer-events:none; }
+
+    .row{ display:flex; align-items:center; gap:10px; }
+
+    /* Progress */
+    .progress{
+      --h: 8px;
+      height: var(--h); width:100%; position:relative; cursor:pointer; border-radius: 999px; overflow:hidden;
+      background: linear-gradient(90deg, rgba(255,255,255,.18), rgba(255,255,255,.08));
+      outline: none;
+    }
+    .progress .buffered{ position:absolute; inset:0 0 0 0; background: linear-gradient(90deg, rgba(255,255,255,.22), rgba(255,255,255,.10)); transform-origin: left; transform: scaleX(0); }
+    .progress .filled{ position:absolute; inset:0 100% 0 0; background: linear-gradient(90deg, var(--accent-1), var(--accent-2), var(--accent-3)); }
+    .progress .thumb{
+      position:absolute; top:50%; width:14px; height:14px; border-radius:50%; transform: translate(-50%,-50%);
+      background: white; box-shadow: 0 4px 12px rgba(0,0,0,.35);
+      opacity:0; transition:opacity .15s ease;
+    }
+    .progress:hover .thumb, .scrubbing .progress .thumb{ opacity:1 }
+
+    /* Buttons */
+    button.icon{ 
+      appearance:none; border:none; outline:none; cursor:pointer; padding:10px; border-radius:14px;
+      background: linear-gradient(180deg, rgba(255,255,255,.16), rgba(255,255,255,.08));
+      border:1px solid rgba(255,255,255,.22); display:grid; place-items:center;
+      transition: transform .06s ease, background .2s ease, border-color .2s ease;
+    }
+    button.icon:active{ transform: scale(.98) }
+    button.icon svg{ width:22px; height:22px; fill:var(--on-glass) }
+
+    .spacer{ flex:1 }
+    .time{ font-variant-numeric: tabular-nums; font-size:.95rem; opacity:.95 }
+
+    /* Volume */
+    .vol{ display:flex; align-items:center; gap:8px; min-width: 110px }
+    .vol input[type="range"]{ width:110px }
+
+    /* Range (progress + volume) */
+    input[type="range"]{ -webkit-appearance:none; appearance:none; height: 6px; background:rgba(255,255,255,.18); border-radius:999px; outline:none; }
+    input[type="range"]::-webkit-slider-thumb{ -webkit-appearance:none; appearance:none; width:16px; height:16px; border-radius:50%; background:#fff; box-shadow:0 2px 10px rgba(0,0,0,.35) }
+    input[type="range"]::-moz-range-thumb{ width:16px; height:16px; border-radius:50%; background:#fff; border:none }
+
+    /* Top bar (title & PiP) */
+    .topbar{
+      position:absolute; left:16px; right:16px; top:16px; display:flex; align-items:center; gap:8px;
+      padding:8px 12px; border-radius: 14px; border:1px solid rgba(255,255,255,.22);
+      background: linear-gradient(180deg, rgba(255,255,255,.12), rgba(255,255,255,.06));
+      backdrop-filter: blur(12px) saturate(150%);
+      -webkit-backdrop-filter: blur(12px) saturate(150%);
+      box-shadow: var(--shadow);
+    }
+    .title{ opacity:.9 }
+
+    /* Hide UI when mouse idle */
+    .chrome-hidden .controls, .chrome-hidden .topbar{ opacity:0; transform: translateY(8px); pointer-events:none }
+
+    /* Full-bleed on small screens */
+    @media (max-width: 760px){
+      .player-shell{ width:100%; border-radius: 0; }
+      .controls{ left:8px; right:8px; bottom:8px; }
+      .topbar{ left:8px; right:8px; top:8px; }
+      .vol input[type="range"]{ width:90px }
+    }
+  </style>
+</head>
+<body>
+  <div class="player-shell" id="player">
+    <video id="video" preload="metadata" playsinline>
+      <source src="1.mp4" type="video/mp4" />
+      Your browser does not support HTML5 video.
+    </video>
+
+    <div class="vignette"></div>
+
+    <div class="topbar">
+      <span class="title">1.mp4</span>
+      <div class="spacer"></div>
+      <button class="icon" id="pipBtn" title="Picture-in-Picture">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 7H5c-1.1 0-2 .9-2 2v6a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2Zm0 8H5V9h14v6Zm-4-4h-4v2h4v-2Z"/></svg>
+      </button>
+    </div>
+
+    <div class="center-play visible" id="centerPlay">
+      <button class="btn" id="bigPlay" aria-label="Play">
+        <svg viewBox="0 0 24 24" width="36" height="36" aria-hidden="true"><path fill="currentColor" d="M8 5v14l11-7z"/></svg>
+      </button>
+    </div>
+
+    <div class="controls" id="controls">
+      <div class="progress" id="progress" aria-label="Seek">
+        <div class="buffered" id="buffered"></div>
+        <div class="filled" id="filled"></div>
+        <div class="thumb" id="thumb"></div>
+      </div>
+      <div class="row">
+        <button class="icon" id="play" title="Play/Pause (Space or K)">
+          <svg id="playIcon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>
+        </button>
+        <div class="time" id="time">00:00 / 00:00</div>
+        <div class="spacer"></div>
+        <div class="vol">
+          <button class="icon" id="mute" title="Mute (M)">
+            <svg id="volIcon" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10v4h3l4 4V6l-4 4H7z"/></svg>
+          </button>
+          <input id="volume" type="range" min="0" max="1" step="0.01" value="1" aria-label="Volume" />
+        </div>
+        <button class="icon" id="theater" title="Theater Mode">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5h18v14H3zM5 9h14v8H5z"/></svg>
+        </button>
+        <button class="icon" id="fs" title="Fullscreen (F)">
+          <svg id="fsIcon" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 14H5v5h5v-2H7v-3zm0-4h3V7h2v5H7V7zm10 9h-3v2h5v-5h-2v3zM14 7h3V5h-5v5h2V7z"/></svg>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const player = document.getElementById('player');
+    const video = document.getElementById('video');
+    const controls = document.getElementById('controls');
+    const playBtn = document.getElementById('play');
+    const playIcon = document.getElementById('playIcon');
+    const timeEl = document.getElementById('time');
+    const progress = document.getElementById('progress');
+    const filled = document.getElementById('filled');
+    const bufferedBar = document.getElementById('buffered');
+    const thumb = document.getElementById('thumb');
+    const vol = document.getElementById('volume');
+    const muteBtn = document.getElementById('mute');
+    const volIcon = document.getElementById('volIcon');
+    const fsBtn = document.getElementById('fs');
+    const fsIcon = document.getElementById('fsIcon');
+    const theaterBtn = document.getElementById('theater');
+    const pipBtn = document.getElementById('pipBtn');
+    const centerPlay = document.getElementById('centerPlay');
+    const bigPlay = document.getElementById('bigPlay');
+
+    // Hide native controls and manage UI state
+    video.controls = false;
+
+    function formatTime(t){
+      if(!isFinite(t)) return '00:00';
+      const h = Math.floor(t/3600);
+      const m = Math.floor((t%3600)/60).toString().padStart(2,'0');
+      const s = Math.floor(t%60).toString().padStart(2,'0');
+      return h>0 ? `${h}:${m}:${s}` : `${m}:${s}`;
+    }
+
+    function updatePlayIcon(){
+      playIcon.innerHTML = video.paused
+        ? '<path d="M8 5v14l11-7z"/>'
+        : '<path d="M6 19h4V5H6v14zm8 0h4V5h-4v14z"/>';
+    }
+    function updateVolIcon(){
+      const v = video.muted ? 0 : video.volume;
+      let d = 'M7 10v4h3l4 4V6l-4 4H7z'; // base
+      if(v===0) d = 'M7 10v4h3l4 4V6l-4 4H7z M16 9l5 5m0-5-5 5';
+      else if(v<.5) d = 'M7 10v4h3l4 4V6l-4 4H7z M17 12a3 3 0 0 1-3 3';
+      else d = 'M7 10v4h3l4 4V6l-4 4H7z M17 12a5 5 0 0 1-5 5 M19 12a7 7 0 0 1-7 7';
+      volIcon.innerHTML = `<path d="${d}"/>`;
+    }
+
+    function updateTime(){
+      timeEl.textContent = `${formatTime(video.currentTime)} / ${formatTime(video.duration)}`;
+    }
+
+    function updateProgress(){
+      const pct = video.currentTime / (video.duration || 1);
+      filled.style.inset = `0 ${100 - pct*100}% 0 0`;
+      const rect = progress.getBoundingClientRect();
+      thumb.style.left = `${pct * rect.width}px`;
+      updateBuffered();
+    }
+
+    function updateBuffered(){
+      try{
+        if(video.buffered && video.buffered.length){
+          let end = video.buffered.end(video.buffered.length-1);
+          const pct = Math.min(1, end / (video.duration || 1));
+          bufferedBar.style.transform = `scaleX(${pct})`;
+        }
+      }catch(e){ /* ignore */ }
+    }
+
+    function togglePlay(){ video.paused ? video.play() : video.pause(); }
+
+    playBtn.addEventListener('click', togglePlay);
+    bigPlay.addEventListener('click', togglePlay);
+    video.addEventListener('click', togglePlay);
+
+    video.addEventListener('play', ()=>{
+      updatePlayIcon();
+      centerPlay.classList.remove('visible');
+    });
+    video.addEventListener('pause', ()=>{
+      updatePlayIcon();
+      centerPlay.classList.add('visible');
+    });
+    video.addEventListener('timeupdate', ()=>{ updateTime(); updateProgress(); });
+    video.addEventListener('progress', updateBuffered);
+    video.addEventListener('loadedmetadata', ()=>{ updateTime(); updateBuffered(); });
+
+    // Scrubbing
+    let scrubbing = false;
+    function seekTo(clientX){
+      const rect = progress.getBoundingClientRect();
+      let x = Math.min(Math.max(0, clientX - rect.left), rect.width);
+      const pct = x / rect.width; video.currentTime = pct * video.duration;
+      filled.style.inset = `0 ${100 - pct*100}% 0 0`;
+      thumb.style.left = `${x}px`;
+    }
+    progress.addEventListener('pointerdown', (e)=>{
+      scrubbing = true; document.body.classList.add('scrubbing');
+      progress.setPointerCapture(e.pointerId);
+      seekTo(e.clientX);
+    });
+    progress.addEventListener('pointermove', (e)=>{ if(scrubbing) seekTo(e.clientX); });
+    progress.addEventListener('pointerup', (e)=>{ scrubbing=false; document.body.classList.remove('scrubbing'); });
+
+    // Volume & mute
+    vol.addEventListener('input', ()=>{ video.volume = vol.value; video.muted = (vol.value==0); updateVolIcon(); });
+    muteBtn.addEventListener('click', ()=>{ video.muted = !video.muted; if(!video.muted && video.volume===0) video.volume=.5; vol.value = video.muted ? 0 : video.volume; updateVolIcon(); });
+
+    // Fullscreen
+    fsBtn.addEventListener('click', async ()=>{
+      if(!document.fullscreenElement){ await player.requestFullscreen?.(); }
+      else{ await document.exitFullscreen?.(); }
+    });
+    document.addEventListener('fullscreenchange', ()=>{
+      fsIcon.innerHTML = document.fullscreenElement
+        ? '<path d="M7 14H5v5h5v-2H7v-3zm0-4h3V7h2v5H7V7zm10 9h-3v2h5v-5h-2v3zM14 7h3V5h-5v5h2V7z"/>' // collapse
+        : '<path d="M7 14H5v5h5v-2H7v-3zm0-4h3V7h2v5H7V7zm10 9h-3v2h5v-5h-2v3zM14 7h3V5h-5v5h2V7z"/>';
+    });
+
+    // Theater mode (toggles page padding dark backdrop emphasis)
+    theaterBtn.addEventListener('click', ()=>{
+      document.body.style.background = document.body.dataset.theater ? '' : 'linear-gradient(160deg, #05060b, #02030a)';
+      document.body.dataset.theater = document.body.dataset.theater ? '' : 'on';
+    });
+
+    // Picture-in-Picture (if supported)
+    pipBtn.addEventListener('click', async ()=>{
+      if('requestPictureInPicture' in video){
+        try{ await video.requestPictureInPicture(); }catch(e){}
+      }
+    });
+
+    // Keyboard shortcuts
+    window.addEventListener('keydown', (e)=>{
+      const tag = document.activeElement?.tagName?.toLowerCase();
+      if(tag === 'input') return; // don't hijack typing
+      switch(e.key.toLowerCase()){
+        case ' ': case 'k': e.preventDefault(); togglePlay(); break;
+        case 'arrowright': video.currentTime = Math.min(video.currentTime + 5, video.duration||video.currentTime); break;
+        case 'arrowleft': video.currentTime = Math.max(video.currentTime - 5, 0); break;
+        case 'arrowup': video.volume = Math.min(video.volume + .05, 1); vol.value = video.volume; updateVolIcon(); break;
+        case 'arrowdown': video.volume = Math.max(video.volume - .05, 0); vol.value = video.volume; updateVolIcon(); break;
+        case 'm': video.muted = !video.muted; vol.value = video.muted?0:video.volume; updateVolIcon(); break;
+        case 'f': fsBtn.click(); break;
+      }
+    });
+
+    // Auto-hide chrome on idle
+    let idleTimer; const IDLE_MS = 2200;
+    function showChrome(){ player.classList.remove('chrome-hidden'); clearTimeout(idleTimer); idleTimer = setTimeout(()=>{ if(!video.paused) player.classList.add('chrome-hidden'); }, IDLE_MS); }
+    ['mousemove','pointermove','pointerdown','keydown','touchstart'].forEach(ev=> player.addEventListener(ev, showChrome));
+    video.addEventListener('play', showChrome); video.addEventListener('pause', ()=> player.classList.remove('chrome-hidden'));
+    showChrome(); // kick off
+
+    // Start paused with center play button visible
+    centerPlay.classList.add('visible');
+  </script>
+</body>
+</html>
